@@ -1,0 +1,333 @@
+---
+- name: configure | Extract the authentication/install plugin configuration
+  ansible.builtin.set_fact:
+    _certbot_install_plugin_: "{{ __certs__.install_plugin }}"
+  loop: "{{ certbot_certificates }}"
+  loop_control:
+    loop_var: __certs__
+  when: __certs__.use_distinct_plugins is defined and __certs__.use_distinct_plugins
+
+- name: configure | Extract the main domain to prevent certificate re-issuance
+  ansible.builtin.set_fact:
+    _certbot_main_domain_: "{{ __certs__.domain | first }}"
+  loop: "{{ certbot_certificates }}"
+  loop_control:
+    loop_var: __certs__
+  when: __certs__.domain is defined and __certs__.domain
+
+- name: configure | Register an account with the Certificate Authority
+  ansible.builtin.shell: >
+    certbot register --non-interactive --agree-tos --email {{ certbot_acme_email }}
+  register: _certbot_ca_account_registration_
+  failed_when: _certbot_ca_account_registration_.rc not in [0,1]
+  changed_when: >
+    "'Account registered' in _certbot_ca_account_registration_.stdout" or
+    "'There is an existing account' in _certbot_ca_account_registration_.stdout"
+
+- name: configure | Check if there are already TLS certificates installed
+  ansible.builtin.stat:
+    path: /etc/letsencrypt/live/{{ _certbot_main_domain_ | first | replace('*.', '') }}/cert.pem
+  register: _certbot_live_pre_existing_certs_
+
+- name: configure | Configure DNS settings to acquire TLS certificates with DNS01 challenge
+  when: >
+    certbot_certificates | selectattr('dns_provider', 'defined') | list | count > 0 and
+    certbot_certificates | selectattr('dns_credentials', 'defined') | list | count > 0
+  block:
+    - name: configure | Create Let's Encrypt secrets directory for DNS credentials
+      ansible.builtin.file:
+        path: "{{ __certbot_dns_secrets_dir }}"
+        state: directory
+        mode: 0640
+        owner: root
+        group: root
+
+    - name: configure | Create 'ini' files to hold secrets for DNS provider API keys for DNS01 challenges
+      ansible.builtin.template:
+        src: secrets.ini.j2
+        dest: "{{ __certbot_dns_secrets_dir }}/{{ __certs__.dns_provider }}.ini"
+        owner: root
+        group: root
+        mode: 0640
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+
+    - name: configure | Issue TLS certificates with the configured DNS plugin
+      ansible.builtin.shell: >
+        certbot certonly --non-interactive -d {{ __certs__.domain }}
+        {% if __certs__.use_distinct_plugins %}
+        -a {{ __certs__.plugin }} -i {{ __certs__.install_plugin }}
+        {% else %}
+        --dns-{{ __certs__.dns_provider }} --dns-{{ __certs__.dns_provider }}-credentials
+        {{ __certbot_dns_secrets_dir }}/{{ __certs__.dns_provider }}.ini
+        --agree-tos -m {{ certbot_acme_email }}
+        {% if __certs__.staging %}--staging{% endif %}
+        {% endif %}
+      args:
+        creates: /etc/letsencrypt/live/{{ __certs__.domain | first | replace('*.', '') }}
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+      register: _certbot_cert_issuance_dns_
+      failed_when: _certbot_cert_issuance_dns_.rc != 0
+      changed_when: >
+        "'Successfully received certificate' in _certbot_cert_issuance_dns_.stdout"
+      when: >
+        not _certbot_live_pre_existing_certs_ is defined and
+        not _certbot_live_pre_existing_certs_.stat.exists
+
+- name: configure | Install Nginx if Certbot plugins are configured for it
+  when: >
+    certbot_certificates | selectattr('plugin', 'equalto', 'nginx') | list | count > 0 or
+    _certbot_install_plugin_ is defined and 'nginx' in _certbot_install_plugin_
+  block:
+    - name: configure | Install Nginx via the official mainline repositories
+      ansible.builtin.include_role:
+        name: delta4x4.webservers.nginx
+        tasks_from: install
+        public: true
+        apply:
+          tags:
+            - nginx_install
+
+    - name: configure | Ensure the system users are part of the Nginx system user group
+      ansible.builtin.user:
+        name: "{{ __user__ }}"
+        group: "{{ nginx_main_group }}"
+        append: true
+      loop: "{{ nginx_system_users }}"
+      loop_control:
+        loop_var: __user__
+
+    - name: configure | Create Nginx configuration file for domain
+      ansible.builtin.template:
+        src: nginx_vhosts.conf.j2
+        dest: "/etc/nginx/sites-available/{{ __certs__.domain }}.conf"
+        owner: "{{ nginx_main_user }}"
+        group: "{{ nginx_main_group }}"
+        mode: 0644
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+
+    - name: configure | Link the available configuration into enabled configuration
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ __certs__.domain }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ __certs__.domain }}.conf"
+        state: link
+        owner: "{{ nginx_main_user }}"
+        group: "{{ nginx_main_group }}"
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+
+    - name: configure | Copy the basic default 'nginx.conf' to managed machine
+      ansible.builtin.copy:
+        src: nginx.conf
+        dest: /etc/nginx/nginx.conf
+        owner: "{{ nginx_main_user }}"
+        group: "{{ nginx_main_group }}"
+        mode: 0770
+
+    - name: configure | Ensure Nginx systemd service is started
+      become: true
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+
+    - name: configure | Issue TLS certificates with the Nginx plugin
+      ansible.builtin.shell: >
+        certbot --non-interactive -d {{ __certs__.domain }}
+        {% if __certs__.use_distinct_plugins %}
+        -a {{ __certs__.plugin }} -i {{ __certs__.install_plugin }}
+        {% else %}
+        --nginx {% if __certs__.staging %}--staging{% endif %}
+        --agree-tos -m {{ certbot_acme_email }}
+        {% endif %}
+      args:
+        creates: /etc/letsencrypt/live/{{ __certs__.domain | replace('*.', '') }}
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+      register: _certbot_cert_issuance_nginx_
+      failed_when: _certbot_cert_issuance_nginx_.rc != 0
+      changed_when: >
+        "'Successfully received certificate' in _certbot_cert_issuance_nginx_.stdout" and
+        "'Successfully deployed certificate' in _certbot_cert_issuance_nginx_.stdout"
+      when: not _certbot_live_pre_existing_certs_.stat.exists
+
+- name: configure | Install Apache if Certbot plugins are configured for it
+  when: >
+    certbot_certificates | selectattr('plugin', 'equalto', 'apache') | list | count > 0 or
+    _certbot_install_plugin_ is defined and 'apache' in _certbot_install_plugin_
+  block:
+    - name: configure | Install Apache
+      ansible.builtin.include_role:
+        name: delta4x4.webservers.apache
+        tasks_from: install
+        public: true
+        apply:
+          tags:
+            - apache_install
+
+    - name: configure | Ensure the system users are part of the Apache system user group
+      ansible.builtin.user:
+        name: "{{ __user__ }}"
+        group: "{{ apache_env_group }}"
+        append: true
+      loop: "{{ apache_system_users }}"
+      loop_control:
+        loop_var: __user__
+
+    - name: configure | Create Apache configuration file for domain
+      ansible.builtin.template:
+        src: apache_vhosts.conf.j2
+        dest: "/etc/apache2/sites-available/{{ __certs__.domain }}.conf"
+        owner: "{{ apache_env_user }}"
+        group: "{{ apache_env_group }}"
+        mode: 0644
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+
+    - name: configure | Link the available configuration into enabled configuration
+      ansible.builtin.file:
+        src: "/etc/apache2/sites-available/{{ __certs__.domain }}.conf"
+        dest: "/etc/apache2/sites-enabled/{{ __certs__.domain }}.conf"
+        state: link
+        owner: "{{ apache_env_user }}"
+        group: "{{ apache_env_group }}"
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+
+    - name: configure | Copy the basic default 'apache2.conf' to managed machine
+      ansible.builtin.copy:
+        src: apache2.conf
+        dest: /etc/apache2/apache2.conf
+        owner: "{{ apache_env_user }}"
+        group: "{{ apache_env_group }}"
+        mode: 0770
+
+    - name: configure | Ensure Apache systemd service is started
+      become: true
+      ansible.builtin.systemd:
+        name: apache2
+        state: started
+
+    - name: configure | Issue TLS certificates with the Apache plugin
+      ansible.builtin.shell: >
+        certbot --non-interactive -d {{ __certs__.domain }}
+        {% if __certs__.use_distinct_plugins %}
+        -a {{ __certs__.plugin }} -i {{ __certs__.install_plugin }}
+        {% else %}
+        --apache {% if __certs__.staging %}--staging{% endif %}
+        --agree-tos -m {{ certbot_acme_email }}
+        {% endif %}
+      args:
+        creates: /etc/letsencrypt/live/{{ __certs__.domain | first | replace('*.', '') }}
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+      register: _certbot_cert_issuance_apache_
+      failed_when: _certbot_cert_issuance_apache_.rc != 0
+      changed_when: >
+        "'Successfully received certificate' in _certbot_cert_issuance_apache_.stdout" and
+        "'Successfully deployed certificate' in _certbot_cert_issuance_apache_.stdout"
+      when: not _certbot_live_pre_existing_certs_.stat.exists
+
+- name: configure | Install TLS certificates via 'standalone' mode
+  when: >
+    certbot_certificates | selectattr('plugin', 'equalto', 'standalone') | list | count > 0 or
+    _certbot_install_plugin_ is defined and 'standalone' in _certbot_install_plugin_
+  block:
+    - name: configure | Ensure configured webroots exist
+      ansible.builtin.file:
+        path: "{{ __certs__.webroot }}"
+        state: directory
+        mode: 0755
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+
+    - name: configure | Issue TLS certificates with the standalone plugin
+      ansible.builtin.shell: >
+        certbot certonly --standalone -d {{ __certs__.domain }}
+        --non-interactive {% if __certs__.staging %}--staging{% endif %}
+        --agree-tos -m {{ certbot_acme_email }}
+      args:
+        creates: /etc/letsencrypt/live/{{ __certs__.domain | first | replace('*.', '') }}
+      loop: "{{ certbot_certificates }}"
+      loop_control:
+        loop_var: __certs__
+      register: _certbot_cert_issuance_standalone_
+      failed_when: _certbot_cert_issuance_standalone_.rc != 0
+      changed_when: >
+        "'Successfully received certificate' in _certbot_cert_issuance_standalone_.stdout" and
+        "'Successfully deployed certificate' in _certbot_cert_issuance_standalone_.stdout"
+      when: not _certbot_live_pre_existing_certs_.stat.exists
+
+- name: configure | Create the pre/post certificate renewal hook scripts
+  when: certbot_hook_services | count > 0
+  block:
+    - name: configure | Create the required directories for Certbot
+      ansible.builtin.file:
+        path: "{{ __dir__ }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      loop:
+        - "{{ __certbot_pre_renewal_hooks_dir }}"
+        - "{{ __certbot_post_renewal_hooks_dir }}"
+      loop_control:
+        loop_var: __dir__
+
+    - name: configure | Create the pre-renewal hooks
+      ansible.builtin.template:
+        src: stop_service.sh.j2
+        dest: "{{ __certbot_pre_renewal_hooks_dir }}/{{ __service__ }}.sh"
+        owner: root
+        group: root
+        mode: 0755
+      loop: "{{ certbot_hook_services }}"
+      loop_control:
+        loop_var: __service__
+
+    - name: configure | Create the post-renewal hooks
+      ansible.builtin.template:
+        src: start_service.sh.j2
+        dest: "{{ __certbot_post_renewal_hooks_dir }}/{{ __service__ }}.sh"
+        owner: root
+        group: root
+        mode: 0755
+      loop: "{{ certbot_hook_services }}"
+      loop_control:
+        loop_var: __service__
+
+- name: configure | Test the certificate renewal
+  ansible.builtin.shell: >
+    certbot renew
+  register: _certbot_renew_test_
+  failed_when: _certbot_renew_test_.rc != 0
+  changed_when: false
+
+- name: configure | Show the output of the attempted renewal
+  ansible.builtin.debug:
+    msg: >
+      Certbot 'renew' command returned the following:
+      {{ _certbot_renew_test_.stdout }}
+
+- name: configure | Configure a cronjob for automatic certificate renewal
+  ansible.builtin.cron:
+    name: Certbot automatic TLS certificate renewal
+    job: "{{ certbot_cron_config.job | default('/usr/bin/certbot renew --quiet') }}"
+    minute: "{{ certbot_cron_config.minute | default('45') }}"
+    hour: "{{ certbot_cron_config.hour | default('2') }}"
+    day: "{{ certbot_cron_config.day | default('*') }}"
+    month: "{{ certbot_cron_config.month | default('*') }}"
+    weekday: "{{ certbot_cron_config.weekday | default('*') }}"
+    user: root
+  when: >
+    certbot_cron_config != {} and certbot_cron_config.job is defined

@@ -1,0 +1,17 @@
+---
+_go_arch_map:
+  i386: "386"
+  x86_64: "amd64"
+  aarch64: "arm64"
+  armv7l: "armv7"
+  armv6l: "armv6"
+
+_go_arch: "{{ _go_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+
+_deps:
+  - tar
+
+_lego_repo: https://github.com/go-acme/lego
+_lego_repo_download: "{{ _lego_repo }}/releases/download"
+
+_lego_tmp_dir: /tmp/lego

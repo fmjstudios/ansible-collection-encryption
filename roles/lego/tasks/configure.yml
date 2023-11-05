@@ -1,0 +1,24 @@
+---
+- name: configure | Create TLS certificates for the configured domains
+  ansible.builtin.shell: >-
+    lego --email {{ __cert__.email }}
+    {% if __cert__.accept_tos %}
+    --accept-tos
+    {% endif %}
+    {% if __cert__.create_pem %}
+    --pem
+    {% endif %}
+    {% if 'webroot' __cert__.challenge %}
+    --http --http.webroot {{ __cert__.path }}
+    {% endif %}
+    {% if 'dns' __cert__.challenge %}
+    --dns {{ __cert__.provider }}
+    {% endif %}
+    --domains {{ __cert__.domains }} run
+    {% if __cert__.hook_script_path and __cert__.hook_script_path != "" %}
+    --run-hook {{ __cert__.hook_script_path }}
+    {% endif %}
+  loop: "{{ lego_acme_certificates }}"
+  loop_control:
+    loop_var: __cert__
+  environment: "{{ __cert__.env_config }}"

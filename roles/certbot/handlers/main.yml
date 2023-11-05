@@ -1,0 +1,6 @@
+---
+- name: Reboot machine to ensure snap's paths are updated
+  ansible.builtin.reboot:
+    msg: "Reboot initiated by Ansible. Ensuring a full snap path reload."
+  listen:
+    - reboot machine

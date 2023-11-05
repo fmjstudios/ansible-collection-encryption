@@ -1,0 +1,58 @@
+---
+- name: install | Ensure existence of user to run 'acme.sh' as
+  block:
+    - name: install | Create system group for 'acme.sh'
+      ansible.builtin.group:
+        name: "{{ acme_group }}"
+        state: present
+        system: true
+
+    - name: install | Create system user for 'acme.sh'
+      ansible.builtin.user:
+        name: "{{ acme_user }}"
+        state: present
+        group: "{{ acme_group }}"
+        system: true
+        create_home: true
+
+    - name: install | Ensure user to be sudo-capable
+      ansible.builtin.user:
+        name: "{{ acme_user }}"
+        groups: sudo
+        append: true
+
+    - name: install | Configure service-level sudo privileges for the user
+      ansible.builtin.template:
+        src: acme_user.j2
+        dest: "/etc/sudoers.d/{{ acme_user }}"
+        owner: root
+        group: root
+        mode: 0644
+
+- name: install | Install 'acme.sh' dependencies
+  ansible.builtin.apt:
+    name: "{{ __dep__ }}"
+    state: present
+  loop: "{{ __acme_dependencies }}"
+  loop_control:
+    loop_var: __dep__
+
+# - name: install | Ensure Ansible's 'remote_tmp' is writeable for acme_user
+#   ansible.builtin.file:
+#     path: "{{ remote_tmp }}"
+#     state: directory
+#     group: "{{ acme_group }}"
+#     mode: 0775
+
+- name: install | Install 'acme.sh'
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl https://get.acme.sh | sh -s email="{{ acme_email }}"
+    creates: "/home/{{ acme_user }}/.acme.sh"
+  register: _acme_sh_initial_installation_
+  failed_when: _acme_sh_initial_installation_.rc != 0
+  changed_when:
+    - "'Install success!' in _acme_sh_initial_installation_.stdout"

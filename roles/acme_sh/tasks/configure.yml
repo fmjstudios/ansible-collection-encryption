@@ -1,0 +1,282 @@
+---
+- name: configure | Extract the SAN configuration and make it available in a top-level variable
+  ansible.builtin.set_fact:
+    _acme_sans_: "{{ __app__.san }}"
+  loop: "{{ acme_apps | flatten(levels=1) }}"
+  loop_control:
+    loop_var: __app__
+  when: acme_apps.san is defined
+
+- name: configure | Set the default CA server
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.shell:
+    cmd: >
+      ./acme.sh --set-default-ca --server "{{ acme_ca_server }}"
+    chdir: "${HOME}/.acme.sh"
+  register: _acme_sh_set_default_ca_
+  failed_when: _acme_sh_set_default_ca_.rc != 0
+  changed_when:
+    - "'Changed default CA' in _acme_sh_set_default_ca_.stdout"
+
+- name: configure | Export the DNS API environment variables
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.lineinfile:
+    path: "/home/{{ acme_user }}/.bashrc"
+    state: present
+    line: "export {{ __env__.key }}='{{ __env__.value }}'"
+    owner: "{{ acme_user }}"
+    group: "{{ acme_user }}"
+    mode: 0644
+  loop: "{{ acme_dns.env | dict2items }}"
+  loop_control:
+    loop_var: __env__
+  environment: "{{ acme_dns.env }}"
+  when: >
+    acme_apps | selectattr('challenge', 'equalto', '') | list | count > 0 or
+    _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'dns') | list | count > 0
+
+- name: configure | Ensure the configured webroots exist
+  block:
+    - name: configure | Ensure the main domain webroot exists
+      ansible.builtin.file:
+        path: "{{ __app__.webroot }}"
+        state: directory
+        mode: 0755
+        owner: "{{ acme_user }}"
+        group: "{{ acme_user }}"
+      loop: "{{ acme_apps }}"
+      loop_control:
+        loop_var: __app__
+      when: __app__.webroot
+
+    - name: configure | Ensure the SAN webroots exist
+      ansible.builtin.file:
+        path: "{{ __san__.webroot }}"
+        state: directory
+        mode: 0755
+        owner: "{{ acme_user }}"
+        group: "{{ acme_user }}"
+      loop: "{{ _acme_sans_ }}"
+      loop_control:
+        loop_var: __san__
+      when: _acme_sans_ is defined and __san__.webroot
+
+- name: configure | Install Nginx if ACME challenges are configured for it
+  block:
+    - name: configure | Install Nginx via the official mainline repositories
+      ansible.builtin.include_role:
+        name: delta4x4.webservers.nginx
+        tasks_from: install
+      tags:
+        - nginx_install
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+    - name: configure | Ensure the system users are part of the Nginx system user group
+      ansible.builtin.user:
+        name: __user__
+        group: "{{ nginx_main_group }}"
+        append: true
+      loop: "{{ nginx_system_users }}"
+      loop_control:
+        loop_var: __user__
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+    - name: configure | Ensure the ACME system users are part of the Nginx system user group
+      ansible.builtin.user:
+        name: "{{ acme_user }}"
+        group: "{{ nginx_main_group }}"
+        append: true
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+    - name: configure | Create Nginx configuration file for domain
+      ansible.builtin.template:
+        src: vhosts.conf.j2
+        dest: "/etc/nginx/sites-available/{{ __app__.domain }}.conf"
+        owner: "{{ nginx_main_user }}"
+        group: "{{ nginx_main_group }}"
+        mode: 0644
+      loop: "{{ acme_apps }}"
+      loop_control:
+        loop_var: __app__
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+    - name: configure | Link the available configuration into enabled configuration
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ __app__.domain }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ __app__.domain }}.conf"
+        state: link
+        owner: "{{ nginx_main_user }}"
+        group: "{{ nginx_main_group }}"
+      loop: "{{ acme_apps }}"
+      loop_control:
+        loop_var: __app__
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+    - name: configure | Copy the basic default 'nginx.conf' to managed machine
+      ansible.builtin.copy:
+        src: nginx.conf
+        dest: /etc/nginx/nginx.conf
+        owner: "{{ nginx_main_user }}"
+        group: "{{ nginx_main_group }}"
+        mode: 0770
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+    - name: configure | Ensure Nginx systemd service is restarted
+      become: true
+      ansible.builtin.systemd:
+        daemon_reload: true
+        name: nginx
+        state: restarted
+      when: >
+        acme_apps | selectattr('challenge', 'equalto', 'nginx') | list | count > 0 or
+        _acme_sans_ is defined and _acme_sans_ | selectattr('challenge', 'equalto', 'nginx') | list | count > 0
+
+- name: configure | Check if there are already pre-existing certificates
+  block:
+    - name: configure | Check if internal acme.sh certificate directory exists
+      ansible.builtin.stat:
+        path: "${HOME}/.acme.sh/{{ __app__.domain }}_ecc"
+      register: _acme_pre_existing_internal_certs_dir_
+      loop: "{{ acme_apps }}"
+      loop_control:
+        loop_var: __app__
+
+    - name: configure | Check if the are already installed production certificates
+      ansible.builtin.stat:
+        path: "{{ __app__.tls.cert_file }}"
+      register: _acme_pre_existing_prod_cert_file_
+      loop: "{{ acme_apps }}"
+      loop_control:
+        loop_var: __app__
+
+    - name: configure | Check if the are already installed production certificate keys
+      ansible.builtin.stat:
+        path: "{{ __app__.tls.cert_file }}"
+      register: _acme_pre_existing_prod_cert_key_
+      loop: "{{ acme_apps }}"
+      loop_control:
+        loop_var: __app__
+
+- name: configure | Issue the TLS certificates
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.command:
+    cmd: >-
+      ./acme.sh --issue
+      -d {{ __app__.domain }}
+      {% if 'dns' == __app__.challenge %}
+      --dns {{ __app__.dns_provider }}
+      {% endif %}
+      {% if 'webroot' == __app__.challenge %}
+      -w {{ __app__.webroot }}
+      {% endif %}
+      {% if 'nginx' == __app__.challenge %}
+      --nginx /etc/nginx/sites-available/{{ __app__.domain }}.conf
+      {% endif %}
+      {% if 'apache' == __app__.challenge %}
+      --apache
+      {% endif %}
+      {% if __app__.san is defined %}
+      {% for san in __app__.san %}
+      -d {{ san.domain }}
+      {% if 'dns' == san.challenge %}
+      --dns {{ san.dns_provider }}
+      {% endif %}
+      {% if 'webroot' == san.challenge %}
+      -w {{ san.webroot }}
+      {% endif %}
+      {% if 'nginx' == san.challenge %}
+      --nginx {{ nginx_conf }}
+      {% endif %}
+      {% if 'apache' == san.challenge %}
+      --apache
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+      {% if __app__.staging %}
+      --staging
+      {% endif %}
+    chdir: "${HOME}/.acme.sh"
+    creates: "${HOME}/.acme.sh/{{ __app__.domain }}_ecc"
+  loop: "{{ acme_apps }}"
+  loop_control:
+    loop_var: __app__
+  register: _acme_sh_cert_issue_
+  failed_when: _acme_sh_cert_issue_.rc != 0
+  changed_when:
+    - "'Cert success.' in _acme_sh_cert_issue_.stdout"
+  environment: "{{ acme_dns.env }}"
+  when: >
+    _acme_pre_existing_internal_certs_dir_.results | count <= 1 or
+    _acme_pre_existing_prod_cert_file_.results | count < 0 and
+    _acme_pre_existing_prod_cert_key_.results | count < 0
+
+- name: configure | Enable auto-upgrades for 'acme.sh'
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.command:
+    cmd: >
+      ./acme.sh --upgrade --auto-upgrade
+    chdir: "${HOME}/.acme.sh"
+  register: _acme_sh_auto_upgrade_
+  failed_when: _acme_sh_auto_upgrade_.rc != 0
+  changed_when:
+    - "'Upgrade success!' in _acme_sh_auto_upgrade_.stdout"
+
+- name: configure | Ensure the certificate base paths exist
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.file:
+    path: "{{ __app__.tls.cert_file | dirname }}"
+    state: directory
+    mode: 0755
+    owner: "{{ acme_user }}"
+    group: "{{ acme_user }}"
+  loop: "{{ acme_apps }}"
+  loop_control:
+    loop_var: __app__
+  when: __app__.tls.cert_file
+
+- name: configure | Install the TLS certificates and configure automatic service reloads
+  become: true
+  become_user: "{{ acme_user }}"
+  ansible.builtin.command:
+    cmd: >
+      ./acme.sh --install-cert
+      -d "{{ __app__.domain }}"
+      {% if __app__.tls.cert_file is defined %}
+      --cert-file "{{ __app__.tls.cert_file }}"
+      {% endif %}
+      {% if __app__.tls.key_file is defined %}
+      --key-file "{{ __app__.tls.key_file }}"
+      {% endif %}
+      {% if __app__.tls.fullchain_file is defined %}
+      --fullchain-file "{{ __app__.tls.fullchain_file }}"
+      {% endif %}
+      --reloadcmd "{{ __app__.tls.reloadcmd }}"
+    chdir: "${HOME}/.acme.sh"
+  loop: "{{ acme_apps }}"
+  loop_control:
+    loop_var: __app__
+  register: _acme_sh_cert_install_
+  failed_when: false
+  changed_when:
+    - "'Installing cert to:' in _acme_sh_cert_install_.stdout"
+    - "'Installing key to:' in _acme_sh_cert_install_.stdout"
+    - "'Installing full chain to:' in _acme_sh_cert_install_.stdout"
+  environment: "{{ acme_dns.env }}"
+  when: __app__.tls.cert_file

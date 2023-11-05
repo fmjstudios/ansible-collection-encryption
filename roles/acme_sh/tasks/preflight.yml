@@ -1,0 +1,109 @@
+---
+- name: preflight | Assert usage of systemd as an init system
+  ansible.builtin.assert:
+    that: ansible_service_mgr == 'systemd'
+    msg: "This role only works with systemd"
+
+- name: preflight | Install package fact dependencies
+  become: true
+  ansible.builtin.package:
+    name: "{{ _pkg_fact_req }}"
+    state: present
+  when: (_pkg_fact_req)
+  vars:
+    _pkg_fact_req: "{% if (ansible_pkg_mgr == 'apt') %}\
+      {{ ('python-apt' if ansible_python_version is version('3', '<') else 'python3-apt') }}
+      {% else %}\
+      {% endif %}"
+
+- name: preflight | Test if the installation variables are set correctly
+  ansible.builtin.assert:
+    that:
+      - acme_user is defined
+      - acme_user is string
+      - acme_group is defined
+      - acme_group is string
+      - acme_email is defined
+      - acme_email is string
+      - acme_ca_server is defined
+      - acme_ca_server is string
+      - acme_ca_server in [ "letsencrypt", "zerossl" ]
+      - acme_reload_services is defined
+      - acme_reload_services is iterable
+      - acme_reload_services | length > 0
+
+- name: preflight | Check use of deprecated dictionary key acme_dns.provider
+  when: acme_dns.provider is defined
+  failed_when: false
+  ansible.builtin.fail:
+    msg: "Please do not use acme_dns.provider as that is now defined per domain to enable acme.sh's hybrid mode"
+
+- name: preflight | Check use of deprecated dictionary key acme_install.config_path
+  when: acme_dns.provider is defined
+  failed_when: false
+  ansible.builtin.fail:
+    msg:
+      - "Please do not use acme_install.config_path as that is now defined in \
+        the separate Apache configuration for proper Ansible caching"
+
+- name: preflight | Check that acme_apps is properly defined
+  ansible.builtin.assert:
+    that:
+      - __app__.domain is defined
+      - __app__.domain is string
+      - __app__.challenge is defined
+      - __app__.challenge is string
+      - __app__.webroot is defined
+      - __app__.webroot is string
+      - __app__.staging is defined
+      - __app__.dns_provider is defined
+      - __app__.dns_provider is string
+  loop: "{{ acme_apps }}"
+  loop_control:
+    loop_var: __app__
+  when:
+    - acme_apps is defined
+    - acme_apps is iterable
+    - acme_apps | length > 0
+
+- name: preflight | Check that acme_apps is properly defined
+  ansible.builtin.assert:
+    that:
+      - __san__.domain is defined
+      - __san__.domain is string
+      - __san__.challenge is defined
+      - __san__.challenge is string
+      - __san__.webroot is defined
+      - __san__.webroot is string
+      - __san__.dns_provider is defined
+      - __san__.dns_provider is string
+  loop: "{{ acme_apps | subelements('san', skip_missing=True) }}"
+  loop_control:
+    loop_var: __san__
+  when:
+    - acme_apps.san is defined
+    - acme_apps.san != []
+
+- name: preflight | Check that acme_apps is properly defined
+  ansible.builtin.assert:
+    that:
+      - __tls__.domain is defined
+      - __tls__.domain is string
+      - __tls__.paths is defined
+      - __tls__.paths.base_path is defined
+      - __tls__.paths.base_path is string
+      - __tls__.paths.cert_file is defined
+      - __tls__.paths.cert_file is string
+      - __tls__.paths.key_file is defined
+      - __tls__.paths.key_file is string
+      - __tls__.paths.fullchain_file is defined
+      - __tls__.paths.fullchain_file is string
+      - __tls__.reloadcmd is defined
+      - __tls__.reloadcmd is string
+  loop: "{{ acme_tls }}"
+  loop_control:
+    loop_var: __tls__
+  when:
+    - acme_tls is defined
+    - acme_tls is iterable
+    - acme_tls | length > 0

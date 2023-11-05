@@ -1,0 +1,56 @@
+---
+- name: install | Create Lego installation directories
+  ansible.builtin.file:
+    path: "{{ lego_install_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: install | Create Lego installation directories
+  ansible.builtin.file:
+    path: "{{ __dir__ }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+  loop:
+    - "{{ lego_install_dir }}"
+    - "{{ lego_install_dir }}/{{ lego_version }}"
+    - "{{ _lego_tmp_path }}"
+  loop_control:
+    loop_var: __dir__
+
+- name: install | Check for an existing Lego binary
+  ansible.builtin.stat:
+    path: "{{ lego_install_dir }}/{{ lego_version }}/lego"
+  register: _lego_existing_binary_check_
+
+- name: install | Download Lego release archive from GitHub releases page
+  ansible.builtin.get_url:
+    url: "{{ lego_install_url }}"
+    dest: "{{ _lego_tmp_dir }}/{{ lego_version }}_linux_{{ go_arch }}.tar.gz"
+    force: true
+    checksum: "{{ lego_install_custom_checksum if lego_install_use_custom_checksum else 'sha256:' + __lego_checksum }}"
+    mode: 0755
+  when:
+    - not _lego_existing_binary_check_.stat.exists
+
+- name: install | Unpack Lego release binary into "{{ lego_install_url }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.unarchive:
+    src: "{{ _lego_tmp_dir }}/{{ lego_version }}_linux_{{ go_arch }}.tar.gz"
+    dest: "{{ lego_install_path }}/{{ lego_version }}"
+    creates: "{{ lego_install_path }}/{{ lego_version }}/lego-linux-{{ go_arch }}"
+    mode: 0755
+    remote_src: true
+
+- name: install | Symlink current version into system PATH
+  ansible.builtin.file:
+    state: link
+    src: "{{ lego_install_path }}/{{ lego_version }}/lego-linux-{{ go_arch }}"
+    dest: /usr/local/bin/lego
+    mode: 0755
+  ignore_errors: "{{ ansible_check_mode }}"
+  notify:
+    - restart promtail

@@ -1,0 +1,17 @@
+#jinja2: lstrip_blocks: True
+
+# {{ ansible_managed }}
+# Nginx virtual host configuration file
+
+server {
+  listen 80;
+  listen [::]:80;
+
+  {% if __app__.domain is defined and __app__.domain != "" -%}
+  server_name {{ __app__.domain }};
+  {% endif %}
+  {% if __app__.webroot is defined and __app__.webroot != "" -%}
+  root {{ __app__.webroot }};
+  {% endif %}
+  index index.html;
+}

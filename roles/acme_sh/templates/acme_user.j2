@@ -1,0 +1,8 @@
+{% for service in acme_reload_services %}
+%{{ acme_user}} ALL= NOPASSWD: /bin/systemctl start {{ service }}
+%{{ acme_user}} ALL= NOPASSWD: /bin/systemctl stop {{ service }}
+%{{ acme_user}} ALL= NOPASSWD: /bin/systemctl reload {{ service }}
+%{{ acme_user}} ALL= NOPASSWD: /bin/systemctl force-reload {{ service }}
+%{{ acme_user}} ALL= NOPASSWD: /bin/systemctl restart {{ service }}
+{% endfor %}
+

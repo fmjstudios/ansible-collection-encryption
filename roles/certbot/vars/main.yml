@@ -1,0 +1,8 @@
+---
+__certbot_package: certbot
+
+__certbot_renewal_hooks_dir: /etc/letsencrypt/renewal-hooks/
+__certbot_pre_renewal_hooks_dir: "{{ __certbot_renewal_hooks_dir }}/pre"
+__certbot_post_renewal_hooks_dir: "{{ __certbot_renewal_hooks_dir }}/post"
+
+__certbot_dns_secrets_dir: /etc/letsencrypt/secrets

@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+
+[Unit]
+Description=Renew Lego TLS certificates
+
+[Timer]
+Persistent=true
+OnCalendar={{ lego_timer_on_calendar }}
+RandomizedDelaySec={{ lego_timer_randomized_delay_sec }}
+ExecStart=/usr/local/bin/lego
+
+[Install]
+WantedBy=timers.target

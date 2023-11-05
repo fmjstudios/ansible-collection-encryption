@@ -1,0 +1,5 @@
+---
+__acme_dependencies:
+  - socat
+  - git
+  - wget

@@ -1,0 +1,28 @@
+---
+lego_version: "4.12.3"
+
+lego_acme_certificates_basepath: "/etc/ssl/certs"
+lego_acme_certificates:
+  - webroot: /etc/ssl/certs/example.com
+    email: root@example.com
+    accept_tos: true
+    domains:
+      - example.com
+      - www.example.com
+    challenge: dns
+    provider: cloudflare
+    env_config:
+      cloudflare_email: "root@example.com"
+      cloudflare_api_key: "somesecretkey"
+    hook_script_path: /opt/scripts/hook.sh
+    create_pem: true
+
+lego_hook_user: "www-data"
+lego_hook_group: "{{ lego_hook_user }}"
+lego_hook_cert_mode: 0644
+lego_hook_key_mode: 0640
+
+lego_install_dir: "/opt/lego"
+lego_install_url: "{{ _lego_repo_download }}/v{{ lego_version }}/lego_v{{ lego_version }}_linux_{{ _go_arch }}.tar.gz"
+lego_install_use_custom_checksum: false
+lego_install_custom_checksum: ""

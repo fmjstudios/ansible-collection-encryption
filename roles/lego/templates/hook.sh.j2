@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+cert_dir="{{ lego_acme_certificates_basepath | default('/etc/ssl/certs') }}"
+
+if [[ -n "${LEGO_CERT_DOMAIN}" ]]; then
+  install -u {{ lego_hook_user }} -g {{ lego_hook_group }} -m {{ lego_hook_cert_mode }} "${LEGO_CERT_PATH}" "${cert_dir}"
+  install -u {{ lego_hook_user }} -g {{ lego_hook_group }} -m {{ lego_hook_key_mode }} "${LEGO_CERT_KEY_PATH}" "${cert_dir}"
+
+  systemctl reload {{ lego_hook_reload_service }}
+fi

@@ -1,0 +1,13 @@
+#jinja2: lstrip_blocks: True
+
+# {{ ansible_managed }}
+# Apache virtual host configuration file
+
+<VirtualHost *:80>
+  {% if __certs__.domain is defined and __certs__.domain != "" -%}
+    ServerName {{ __certs__.domain }}
+  {% endif %}
+  {% if __certs__.webroot is defined and __certs__.webroot != "" -%}
+    DocumentRoot {{ __certs__.webroot }}
+  {% endif %}
+</VirtualHost>

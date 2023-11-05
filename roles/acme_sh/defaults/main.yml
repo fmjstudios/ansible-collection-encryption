@@ -1,0 +1,53 @@
+---
+# The user to create (if they dont exist yet) to run 'acme.sh' as
+acme_user: acme
+
+# The group to create (if they dont exist yet) to take ownership of 'acme.sh' certs
+acme_group: acme
+
+# Any valid email address
+acme_email: test@example.com
+
+# Possible values: "letsencrypt", "zerossl"
+# Define the CA to use for certificate creation
+acme_ca_server: letsencrypt
+
+# The service add systemctl privileges to /etc/sudoers.d/ for starting, stopping etc.
+# without manual password authenticaiton
+acme_reload_services:
+  []
+  # - apache2
+  # - lsws
+
+# The DNS server configuration - should be fully reusable no matter the service
+# See: https://github.com/acmesh-official/acme.sh/wiki/dnsapi
+acme_dns: {}
+# env:
+#     AUTODNS_USER: "test@example.com"
+#     AUTODNS_PASSWORD: "password"
+#     AUTODNS_CONTEXT: "4"
+
+# Application configuration
+# Choose a single main domain and however many SAN domain names as wantd
+# Staging will configure 'acme.sh' to ask ACME for staging certificates
+# Challenge can either be 'dns','webroot' or 'apache' and controls how certificates are acquired
+acme_apps: []
+#   - domain: example.com
+#     staging: false
+#     challenge: dns
+#     webroot: /var/www/example.com
+#     dns_provider: dns_cf
+#     san:
+#       - domain: www.example.com
+#         challenge: dns
+#         webroot: /var/www/www.example.com
+#         dns_provider: dns_cf
+#       - domain: test.example.com
+#         challenge: dns
+#         webroot: /var/www/test.example.com
+#         dns_provider: dns_cf
+#     tls:
+#       cert_file: /etc/tls/certs/cert.pem
+#       key_file: /etc/tls/certs/key.pem
+#       fullchain_file: /etc/tls/certs/fullchain.pem
+#       reloadcmd: sudo systemctl reload apache2

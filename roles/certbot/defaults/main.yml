@@ -1,0 +1,67 @@
+---
+# The E-mail to register with the Certificate Authority
+certbot_acme_email: test@example.com
+
+# The certificates to create with certbot
+#
+# This list can be extended/shortened as pleased. Each domain's TLS certificate
+# will be issued using the corresponding 'plugin' or using distinct plugins if
+# configured to do so. By default the list is empty and no certificates will be
+# created
+#
+# Configuration:
+# domain: The FQDN
+# webroot: The path to the webroot
+# plugin: Can be 'webroot', 'nginx', 'apache', 'standalone', 'dns' - 'manual' is
+#        not supported
+# use_distinct_plugins: Use different plugins for authentication and installation
+#       of TLS certificates. If configured to do so (e.g. value is true) the above
+#       plugin will be used as the 'authentication' plugin
+# staging: Issue invalid staging/testing certificates
+# install_plugin: The distinct 'installation' certbot plugin to use
+# dns_provider: The company name after the second dash for each certbot DNS plugin
+#       See: https://eff-certbot.readthedocs.io/en/stable/using.html#dns-plugins
+# dns_credentials: This object can be dynamically configured according to each
+#       certbot DNS plugin as the dictionary keys and values will be kept and an 'ini'
+#       credentials file will be generated from them. Default value is an empty dict
+#       (e.g. '{}') where
+certbot_certificates: []
+# Example Configuration:
+# - domain: example.com
+#   webroot: /var/www/html/example.com
+#   plugin: webroot
+#   use_distinct_plugins: false
+#   staging: false
+#   install_plugin: nginx
+#   dns_provider: cloudflare
+#   dns_credentials:
+#     dns_cloudflare_email: <cloudflare-account-email>
+#     dns_cloudflare_api_token: <cloudflare-api-token>
+
+# The services to add pre/post renewal hooks for
+#
+# A list of system services to stop before TLS certificates are renewed and
+# re-start after renewal has completed. In essence the role will generate Shell
+# scripts executing 'systemctl restart ...service' into a pre-defined directory
+# by Certbot, see: https://eff-certbot.readthedocs.io/en/stable/using.html#automated-renewals
+#
+# Systemd, OpenRC, Upstart and Plan9 services are supported within the scripts
+certbot_hook_services:
+  []
+  # - nginx
+  # - apache
+
+# The cronjob configuration for the certificate renewal
+#
+# This dictionary confiugres the job run by the Certbot renewal cronjob as well
+# the cron schedule for it. By default no cronjobs are created for any domain if
+# job value is provided the role creates a cronjob at 2:45 AM using the root user
+certbot_cron_config:
+  {}
+  # job: "sleep {{ 360 | random }} && /usr/bin/certbot renew --quiet"
+  # minute: 20
+  # hour: 2
+  # day: "*"
+  # month: "*"
+  # weekday: "*"
+  # user: root

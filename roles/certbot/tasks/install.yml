@@ -1,0 +1,84 @@
+---
+- name: install | Remove potential system packages of 'certbot'
+  ansible.builtin.apt:
+    name: "{{ __certbot_package }}"
+    state: absent
+
+- name: install | Install 'snapd' system package
+  ansible.builtin.apt:
+    name: snapd
+    state: present
+  register: _certbot_snapd_system_package_install_
+
+- name: install | Check if there's a '/snap' directory in system root
+  ansible.builtin.stat:
+    path: /snap
+  register: _certbot_root_snap_dir_check_
+
+- name: install | Ensure the 'snapd' systemd socket is started and enabled
+  ansible.builtin.systemd:
+    name: snapd.socket
+    state: started
+    enabled: true
+
+- name: install | Enable classic snap support
+  ansible.builtin.file:
+    src: /var/lib/snapd/snap
+    dest: /snap
+    state: link
+  when: ansible_os_family != "Debian"
+
+- name: install | Install the core snap
+  community.general.snap:
+    name: core
+    state: present
+  when:
+    - ansible_distribution != "Ubuntu"
+    - _certbot_snapd_system_package_install_ is changed
+
+- name: install | Refresh all installed snaps
+  ansible.builtin.shell: >
+    snap refresh
+  register: _snap_full_refresh_
+  changed_when: >
+    'All snaps up to date' in _snap_full_refresh_.stdout or
+    'refreshed' in _snap_full_refresh_.stdout
+  failed_when: _snap_full_refresh_.rc != 0
+  notify:
+    - reboot machine
+
+- name: install | Reset the SSH connection to to ensure snap's paths are updated correctly
+  ansible.builtin.meta: reset_connection
+
+- name: install | Install the Certbot snap
+  community.general.snap:
+    name: "{{ __certbot_package }}"
+    state: present
+    classic: true
+
+- name: install | Link the newly installed Certbot snap into the system PATH
+  ansible.builtin.file:
+    src: /snap/bin/certbot
+    dest: /usr/bin/certbot
+    state: link
+
+- name: install | Configure Certbot to trust plugins with root privileges
+  ansible.builtin.shell: >
+    snap set certbot trust-plugin-with-root=ok
+  register: _certbot_enable_plugin_root_priv_trust_
+  failed_when: _certbot_enable_plugin_root_priv_trust_.rc != 0
+  changed_when: _certbot_enable_plugin_root_priv_trust_.rc == 0
+  when: >
+    certbot_certificates | selectattr('dns_provider', 'defined') | list | count > 0 and
+    certbot_certificates | selectattr('dns_credentials', 'defined') | list | count > 0
+
+- name: install | Install the Certbot DNS plugins if some are configured
+  community.general.snap:
+    name: "certbot-dns-{{ __certs__.dns_provider }}"
+    state: present
+    classic: true
+  loop: "{{ certbot_certificates }}"
+  loop_control:
+    loop_var: __certs__
+  when: >
+    __certs__.plugin == 'dns'

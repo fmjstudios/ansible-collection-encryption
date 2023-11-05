@@ -1,0 +1,33 @@
+---
+- name: Preflight
+  ansible.builtin.include_tasks:
+    file: preflight.yml
+    apply:
+      tags:
+        - acme_sh_install
+        - acme_sh_configure
+        - acme_sh_run
+  tags:
+    - acme_sh_install
+    - acme_sh_configure
+    - acme_sh_run
+
+- name: Install
+  ansible.builtin.include_tasks:
+    file: install.yml
+    apply:
+      become: true
+      tags:
+        - acme_sh_install
+  tags:
+    - acme_sh_install
+
+- name: Configure
+  ansible.builtin.include_tasks:
+    file: configure.yml
+    apply:
+      become: true
+      tags:
+        - acme_sh_configure
+  tags:
+    - acme_sh_configure
